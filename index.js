@@ -23,7 +23,38 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 });
 
 async function run() {
+  const parcelCollection = client.db("parcelDB").collection("parcels");
+
+  // ✅ GET the latest parcel (optionally filter by senderEmail using query param)
+  app.get("/api/parcel/latest", async (req, res) => {
+    try {
+      const senderEmail = req.query.email;
+      const filter = senderEmail ? { senderEmail } : {};
+
+      const latestParcel = await parcelsCollection
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .limit(1)
+        .toArray();
+
+      res.json(latestParcel[0] || null);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch latest parcel" });
+    }
+  });
+
   try {
+    // ✅ POST: Create a parcel
+    try {
+      app.post("/parcels", async (req, res) => {
+        const newParcel = req?.body;
+        const result = await parcelCollection.insertOne(newParcel);
+        res.status(201).send(result);
+      });
+    } catch (err) {
+      res.status(500).send({ err: "❌ Failed to add parcel" });
+    }
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
