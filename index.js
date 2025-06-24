@@ -2,7 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 dotenv.config();
 
@@ -25,26 +25,24 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 async function run() {
   const parcelCollection = client.db("parcelDB").collection("parcels");
 
-  // ✅ GET the latest parcel (optionally filter by senderEmail using query param)
-  app.get("/api/parcel/latest", async (req, res) => {
-    try {
-      const senderEmail = req.query.email;
-      const filter = senderEmail ? { senderEmail } : {};
-
-      const latestParcel = await parcelsCollection
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .limit(1)
-        .toArray();
-
-      res.json(latestParcel[0] || null);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch latest parcel" });
-    }
-  });
-
   try {
-    // ✅ POST: Create a parcel
+    //GET the latest parcel (optionally filter by senderEmail using query param)
+    app.get("/parcels", async (req, res) => {
+      try {
+        const senderEmail = req.query.email;
+        const filter = senderEmail ? { senderEmail } : {};
+
+        const latestParcel = await parcelCollection
+          .find(filter)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(latestParcel);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to fetch latest parcel" });
+      }
+    });
+    // POST: Create a parcel
     try {
       app.post("/parcels", async (req, res) => {
         const newParcel = req?.body;
@@ -54,6 +52,28 @@ async function run() {
     } catch (err) {
       res.status(500).send({ err: "❌ Failed to add parcel" });
     }
+
+    // Delete: Delete a parcel
+    app.delete("/parcels/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        console.log(id);
+        const query = { _id: new ObjectId(id) };
+        const result = await parcelCollection.deleteOne(query);
+
+        if (result.deletedCount === 1) {
+          res.send(result);
+        } else {
+          res
+            .status(404)
+            .send({ success: false, message: "Parcel not found." });
+        }
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Failed to delete parcel.", error });
+      }
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
