@@ -27,7 +27,7 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 
 async function run() {
   const parcelCollection = client.db("parcelDB").collection("parcels");
-
+  const paymentsCollection = client.db("parcelDB").collection("payments")
   try {
     //GET the latest parcel (optionally filter by senderEmail using query param)
     app.get("/parcels", async (req, res) => {
@@ -96,12 +96,58 @@ async function run() {
       }
     });
 
+    // ✅ POST: Confirm payment and save history
+    app.post("/payments", async (req, res) => {
+      const {
+        parcelId,
+        userEmail,
+        amount,
+        currency,
+        status,
+        paymentMethod,
+        transactionId, // from frontend or Stripe
+      } = req.body;
 
-    
+      try {
+        // 🔁 Step 1: Update parcel's payment_status to 'paid'
+        const updateResult = await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: { payment_status: "paid" } }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({ message: "Parcel not found or already updated" });
+        }
+
+        // 💾 Step 2: Store payment history in "payments" collection
+
+        const newPayment = {
+          parcelId: new ObjectId(parcelId),
+          userEmail,
+          amount,
+          currency,
+          status,
+          paymentMethod,
+          transactionId,
+          createdAt: new Date(),
+          createdAtIso: new Date().toISOString(), // store ISO date as string
+        };
+
+        const result = await paymentsCollection.insertOne(newPayment);
+
+        res.send(result);
+      } catch (err) {
+        res
+          .status(500)
+          .json({ message: "❌ Server error", error: err.message });
+      }
+    });
 
     //Stripe Payment Intent
     app.post("/create-payment-intent", async (req, res) => {
-      const amountInCents = req.body.amountInCents
+      const amountInCents = req.body.amountInCents;
       console.log(amountInCents);
 
       try {
