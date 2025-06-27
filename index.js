@@ -4,7 +4,8 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { default: Stripe } = require("stripe");
-
+const admin = require("firebase-admin");
+const serviceAccount = require("./firebase-service-key.json");
 dotenv.config();
 
 const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_KEY);
@@ -15,6 +16,10 @@ const PORT = process.env.PORT || 5000;
 // ✅ Middleware
 app.use(cors());
 app.use(express.json());
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -27,8 +32,62 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 
 async function run() {
   const parcelCollection = client.db("parcelDB").collection("parcels");
-  const paymentsCollection = client.db("parcelDB").collection("payments")
+  const paymentsCollection = client.db("parcelDB").collection("payments");
+  const usersCollection = client.db("parcelDB").collection("users");
   try {
+    async function verifyToken(req, res, next) {
+      const authHeader = req.headers.Authorization;
+
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res
+          .status(401)
+          .json({ message: "Unauthorized: Missing or invalid token" });
+      }
+
+      const idToken = authHeader.split(" ")[1];
+
+      try {
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        req.user = decoded; // user data (uid, email, etc.)
+        next();
+      } catch (error) {
+        console.error("Token verification failed:", error);
+        res.status(401).json({ message: "Unauthorized: Invalid token" });
+      }
+    }
+
+    // POST /api/users
+    app.post("/users", async (req, res) => {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: "Missing name, email or uid" });
+      }
+
+      try {
+        // Check if email already exists
+        const existingUser = await usersCollection.findOne({ email });
+
+        if (existingUser) {
+          return res
+            .status(200)
+            .json({ message: "User already exists", user: existingUser });
+        }
+
+        // Insert new user
+        const newUser = req.body;
+
+        await usersCollection.insertOne(newUser);
+
+        return res
+          .status(201)
+          .json({ message: "User created successfully", user: newUser });
+      } catch (err) {
+        console.error("User insert error:", err);
+        return res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
     //GET the latest parcel (optionally filter by senderEmail using query param)
     app.get("/parcels", async (req, res) => {
       try {
@@ -94,6 +153,46 @@ async function run() {
           .status(500)
           .send({ success: false, message: "Failed to delete parcel.", error });
       }
+    });
+
+    // ✅ GET: Get payment history by user email
+    app.get("/payment/history", async (req, res) => {
+      const userEmail = req.query.email;
+
+      if (!userEmail) {
+        return res.status(400).json({ message: "Email query is required" });
+      }
+
+      try {
+        const payments = await paymentsCollection
+          .find({ userEmail })
+          .sort({ createdAt: -1 }) // latest first
+          .toArray();
+
+        res.send(payments);
+      } catch (err) {
+        res
+          .status(500)
+          .json({ message: "Error loading history", error: err.message });
+      }
+    });
+
+    app.post("/tracking", async (req, res) => {
+      const {
+        tracking_id,
+        parcel_id,
+        status,
+        message,
+        updated_by = "",
+      } = req.body;
+      const log = {
+        tracking_id,
+        parcel_id: parcel_id ? new ObjectId(parcel_id) : undefined,
+        status,
+        message,
+        time: new Date(),
+        updated_by,
+      };
     });
 
     // ✅ POST: Confirm payment and save history
