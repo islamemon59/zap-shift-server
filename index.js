@@ -34,9 +34,10 @@ async function run() {
   const parcelCollection = client.db("parcelDB").collection("parcels");
   const paymentsCollection = client.db("parcelDB").collection("payments");
   const usersCollection = client.db("parcelDB").collection("users");
+  const ridersCollection = client.db("parcelDB").collection("riders");
   try {
-    async function verifyToken(req, res, next) {
-      const authHeader = req.headers.Authorization;
+    const verifyToken = async (req, res, next) => {
+      const authHeader = req.headers.authorization;
 
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         return res
@@ -48,13 +49,63 @@ async function run() {
 
       try {
         const decoded = await admin.auth().verifyIdToken(idToken);
-        req.user = decoded; // user data (uid, email, etc.)
+        req.decoded = decoded; // user data (uid, email, etc.)
         next();
       } catch (error) {
         console.error("Token verification failed:", error);
         res.status(401).json({ message: "Unauthorized: Invalid token" });
       }
-    }
+    };
+
+    app.get("/riders", async (req, res) => {
+      try {
+        // Find riders with status "pending"
+        const pendingRiders = await ridersCollection
+          .find({ status: "pending" })
+          .toArray();
+
+        res.send(pendingRiders);
+      } catch (error) {
+        console.error("Error fetching pending riders:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.post("/riders", async (req, res) => {
+      try {
+        const riderData = req.body;
+        const result = await ridersCollection.insertOne(riderData);
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to add rider" });
+      }
+    });
+
+    app.patch("/riders/:riderId", async (req, res) => {
+      const { riderId } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        return res.status(400).send("Status is required");
+      }
+
+      try {
+        const result = await ridersCollection.updateOne(
+          { _id: new ObjectId(riderId) },
+          { $set: { status } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send("Rider not found");
+        }
+
+        res.send("Status updated successfully");
+      } catch (error) {
+        console.error(error);
+        res.status(500).send("Server error");
+      }
+    });
 
     // POST /api/users
     app.post("/users", async (req, res) => {
@@ -158,6 +209,8 @@ async function run() {
     // ✅ GET: Get payment history by user email
     app.get("/payment/history", async (req, res) => {
       const userEmail = req.query.email;
+
+      console.log(req.headers);
 
       if (!userEmail) {
         return res.status(400).json({ message: "Email query is required" });
