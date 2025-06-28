@@ -58,6 +58,13 @@ async function run() {
     };
 
     app.get("/riders", async (req, res) => {
+      const status = req.query.status;
+      const filter = status ? { status } : {};
+      const riders = await ridersCollection.find(filter).toArray();
+      res.send(riders);
+    });
+
+    app.get("/allRiders", async (req, res) => {
       try {
         // Find riders with status "pending"
         const pendingRiders = await ridersCollection
@@ -84,10 +91,26 @@ async function run() {
 
     app.patch("/riders/:riderId", async (req, res) => {
       const { riderId } = req.params;
-      const { status } = req.body;
+      const { status, email } = req.body;
 
       if (!status) {
         return res.status(400).send("Status is required");
+      }
+
+      if (status == "active") {
+        try {
+          const query = { email };
+          const updatedDoc = {
+            $set: {
+              role: "rider",
+            },
+          };
+          const result = await usersCollection.updateOne(query, updatedDoc);
+          res.send(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).send("Server error");
+        }
       }
 
       try {
@@ -103,6 +126,36 @@ async function run() {
         res.send("Status updated successfully");
       } catch (error) {
         console.error(error);
+        res.status(500).send("Server error");
+      }
+    });
+
+    // routes/users.js
+    app.get("/users", async (req, res) => {
+      const search = req.query.search || "";
+      const users = await usersCollection
+        .find({
+          email: { $regex: search, $options: "i" },
+        })
+        .limit(10)
+        .toArray();
+      res.send(users);
+    });
+
+    app.patch("/users/:userId", async (req, res) => {
+      const { userId } = req.params;
+      const { role } = req.body;
+
+      try {
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { role } }
+        );
+        if (result.matchedCount === 0)
+          return res.status(404).send("User not found");
+        res.send("Role updated successfully");
+      } catch (err) {
+        console.error(err);
         res.status(500).send("Server error");
       }
     });
