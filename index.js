@@ -5,7 +5,6 @@ const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { default: Stripe } = require("stripe");
 const admin = require("firebase-admin");
-const serviceAccount = require("./firebase-service-key.json");
 dotenv.config();
 
 const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_KEY);
@@ -16,6 +15,8 @@ const PORT = process.env.PORT || 5000;
 // ✅ Middleware
 app.use(cors());
 app.use(express.json());
+
+const serviceAccount = require("./firebase-service-key.json");
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -36,6 +37,7 @@ async function run() {
   const usersCollection = client.db("parcelDB").collection("users");
   const ridersCollection = client.db("parcelDB").collection("riders");
   try {
+    // verify firebase token
     const verifyToken = async (req, res, next) => {
       const authHeader = req.headers.authorization;
 
@@ -54,6 +56,25 @@ async function run() {
       } catch (error) {
         console.error("Token verification failed:", error);
         res.status(401).json({ message: "Unauthorized: Invalid token" });
+      }
+    };
+
+    // Verify admin role
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req?.decoded?.email;
+
+      if (!email) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      try {
+        const user = await usersCollection.findOne({ email });
+        if (user?.role === "admin") {
+          next();
+        }
+      } catch (error) {
+        res.status(500).json({ message: "Server error" });
       }
     };
 
@@ -97,7 +118,18 @@ async function run() {
         return res.status(400).send("Status is required");
       }
 
-      if (status == "active") {
+      if (status && riderId == "active") {
+        try {
+          const filter = { _id: new ObjectId(riderId) };
+          const activeRider = await ridersCollection.updateOne(filter, {
+            $set: { status },
+          });
+          res.send(activeRider);
+        } catch (error) {
+          console.error(error);
+          res.status(500).send("Server error");
+        }
+
         try {
           const query = { email };
           const updatedDoc = {
@@ -160,6 +192,22 @@ async function run() {
       }
     });
 
+    // routes/users.js (or wherever you keep user routes)
+    app.get("/users/role", async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send("Email is required");
+
+      try {
+        const user = await usersCollection.findOne({ email }); // replace with your collection name
+        if (!user) return res.status(404).send("User not found");
+
+        res.json({ role: user.role });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send("Server error");
+      }
+    });
+
     // POST /api/users
     app.post("/users", async (req, res) => {
       const { email } = req.body;
@@ -192,6 +240,22 @@ async function run() {
       }
     });
 
+    // GET /parcels/assignable
+    app.get("/parcels/assignable", async (req, res) => {
+      try {
+        const parcels = await parcelCollection
+          .find({
+            payment_status: "paid",
+            delivery_status: "not_collected",
+          })
+          .toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send("Server error");
+      }
+    });
+
     //GET the latest parcel (optionally filter by senderEmail using query param)
     app.get("/parcels", async (req, res) => {
       try {
@@ -207,6 +271,22 @@ async function run() {
       } catch (error) {
         res.status(500).json({ error: "Failed to fetch latest parcel" });
       }
+    });
+
+    app.patch("/parcels/:parcelId", async (req, res) => {
+      const parcelId = req.params.parcelId;
+      const { assigned_rider, delivery_status } = req.body;
+
+      const query = { _id: new ObjectId(parcelId) };
+      const filter = { _id: new ObjectId(assigned_rider) };
+      const updateParcel = await parcelCollection.updateOne(query, {
+        $set: { delivery_status },
+      });
+      res.send(updateParcel);
+      const updateRider = await ridersCollection.updateOne(filter, {
+        $set: { status: "busy" },
+      });
+      res.send(updateRider);
     });
 
     app.get("/parcel/:id", async (req, res) => {
