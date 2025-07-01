@@ -99,6 +99,26 @@ async function run() {
       }
     });
 
+    app.get("/rider/parcels/completed-deliveries", async (req, res) => {
+      try {
+        const email = req.query.email;
+        const completedParcels = await parcelCollection
+          .find({
+            assigned_rider_email: email,
+            delivery_status: {
+              $in: ["delivered", "service_center_delivered"],
+            },
+          })
+          .sort({ creation_date: -1 })
+          .toArray();
+
+        res.send(completedParcels);
+      } catch (error) {
+        console.error("Error fetching completed deliveries:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
     // GET /api/parcels/pending-for-rider?email=rider@gmail.com
     app.get("/pending-for-rider", async (req, res) => {
       const riderEmail = req.query.riderEmail;
@@ -121,6 +141,29 @@ async function run() {
       } catch (error) {
         console.error("Error fetching pending deliveries:", error);
         res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.patch("/parcels/:id/cashout", async (req, res) => {
+      const id = req.params.id;
+      const { cashout_amount } = req.body;
+
+      try {
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              cashout_status: "cashed_out",
+              cashout_amount: parseFloat(cashout_amount),
+              cashout_date: new Date().toISOString(),
+            },
+          }
+        );
+
+        res.send(result); // ✅ always use res.send, not res.json, if boss prefers
+      } catch (error) {
+        console.error("Error during cash out:", error);
+        res.status(500).send({ message: "Server error" });
       }
     });
 
