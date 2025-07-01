@@ -39,7 +39,7 @@ async function run() {
   try {
     // verify firebase token
     const verifyToken = async (req, res, next) => {
-      const authHeader = req.headers.authorization;
+      const authHeader = req.headers.Authorization;
 
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         return res
@@ -51,7 +51,7 @@ async function run() {
 
       try {
         const decoded = await admin.auth().verifyIdToken(idToken);
-        req.decoded = decoded; // user data (uid, email, etc.)
+        req.decoded = decoded;
         next();
       } catch (error) {
         console.error("Token verification failed:", error);
@@ -95,6 +95,54 @@ async function run() {
         res.send(pendingRiders);
       } catch (error) {
         console.error("Error fetching pending riders:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // GET /api/parcels/pending-for-rider?email=rider@gmail.com
+    app.get("/pending-for-rider", async (req, res) => {
+      const riderEmail = req.query.riderEmail;
+      console.log(riderEmail);
+
+      if (!riderEmail) {
+        return res.status(400).json({ message: "Missing rider email" });
+      }
+
+      try {
+        const parcels = await parcelCollection
+          .find({
+            assigned_rider_email: riderEmail,
+            delivery_status: { $in: ["rider_assigned", "in-transit"] },
+          })
+          .sort({ creation_date: -1 })
+          .toArray();
+
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching pending deliveries:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.patch("/parcels/:parcelId/delivery-status", async (req, res) => {
+      const parcelId = req.params.parcelId;
+      const { delivery_status } = req.body;
+
+      try {
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: { delivery_status } }
+        );
+        if (result.nModified === 0) {
+          return res
+            .status(404)
+            .json({ message: "Parcel not found or nothing updated" });
+        }
+        res.json({
+          message: `Parcel delivery status updated to ${delivery_status}`,
+        });
+      } catch (error) {
+        console.error(error);
         res.status(500).json({ message: "Server error" });
       }
     });
@@ -174,7 +222,7 @@ async function run() {
       res.send(users);
     });
 
-    app.patch("/users/:userId", async (req, res) => {
+    app.patch("/users/:userId", verifyToken, verifyAdmin, async (req, res) => {
       const { userId } = req.params;
       const { role } = req.body;
 
@@ -275,12 +323,18 @@ async function run() {
 
     app.patch("/parcels/:parcelId", async (req, res) => {
       const parcelId = req.params.parcelId;
-      const { assigned_rider, delivery_status } = req.body;
+      const { assigned_rider, delivery_status, riderEmail, riderName } =
+        req.body;
 
       const query = { _id: new ObjectId(parcelId) };
       const filter = { _id: new ObjectId(assigned_rider) };
       const updateParcel = await parcelCollection.updateOne(query, {
-        $set: { delivery_status },
+        $set: {
+          delivery_status,
+          assigned_rider_id: assigned_rider,
+          assigned_rider_email: riderEmail,
+          assigned_rider_name: riderName,
+        },
       });
       res.send(updateParcel);
       const updateRider = await ridersCollection.updateOne(filter, {
