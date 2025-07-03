@@ -36,6 +36,7 @@ async function run() {
   const paymentsCollection = client.db("parcelDB").collection("payments");
   const usersCollection = client.db("parcelDB").collection("users");
   const ridersCollection = client.db("parcelDB").collection("riders");
+  const trackingCollection = client.db("parcelDB").collection("trackings");
   try {
     // verify firebase token
     const verifyToken = async (req, res, next) => {
@@ -144,6 +145,64 @@ async function run() {
       }
     });
 
+    app.get("/parcels/rider-parcels", async (req, res) => {
+      try {
+        const riderEmail = req.query.email;
+
+        if (!riderEmail) {
+          return res.status(400).send({ message: "Email is required" });
+        }
+
+        const parcels = await parcelCollection
+          .find({ assigned_rider_email: riderEmail, deli })
+          .sort({ creation_date: -1 })
+          .toArray();
+
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching rider parcels:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    app.get("/tracking/:tracking_id", async (req, res) => {
+      const trackingId = req.params.tracking_id;
+      try {
+        const history = await trackingCollection
+          .find({ tracking_id: trackingId })
+          .sort({ timestamp: 1 })
+          .toArray();
+
+        if (!history.length) {
+          return res.status(404).send({ message: "Tracking info not found" });
+        }
+
+        res.send({ tracking_id: trackingId, history });
+      } catch (error) {
+        console.error("Error fetching tracking history:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    app.post("/trackings", async (req, res) => {
+      try {
+        const update = req.body;
+
+        update.timestamp = new Date();
+
+        if (!update.tracking_id || !update.status) {
+          return res.status(400).send({ message: "Missing required fields" });
+        }
+
+        const result = await trackingCollection.insertOne(update);
+
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (error) {
+        console.error("Error saving tracking log:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
     app.patch("/parcels/:id/cashout", async (req, res) => {
       const id = req.params.id;
       const { cashout_amount } = req.body;
@@ -171,10 +230,20 @@ async function run() {
       const parcelId = req.params.parcelId;
       const { delivery_status } = req.body;
 
+      const updatedDoc = {
+        delivery_status,
+      };
+
+      if (delivery_status === "in-transit") {
+        updatedDoc.picked_at = new Date().toISOString();
+      } else if (delivery_status === "delivered") {
+        updatedDoc.delivered_at = new Date().toISOString();
+      }
+
       try {
         const result = await parcelCollection.updateOne(
           { _id: new ObjectId(parcelId) },
-          { $set: { delivery_status } }
+          { $set: updatedDoc }
         );
         if (result.nModified === 0) {
           return res
@@ -400,6 +469,34 @@ async function run() {
         res.send(parcel);
       } catch (error) {
         res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.get("/parcel/delivery/status-count", async (req, res) => {
+      try {
+        const pipeline = [
+          {
+            $group: {
+              _id: "$delivery_status",
+              count: { $sum: 1 },
+            },
+          },
+          {
+            $project: {
+              status: "$_id",
+              count: 1,
+              _id: 0
+            }
+          }
+        ];
+
+        const result = await parcelCollection.aggregate(pipeline).toArray()
+
+        res.send(result)
+
+      } catch (error) {
+        console.error("Error getting parcel status counts:", error);
+        res.status(500).send({ message: "Server error" });
       }
     });
 
