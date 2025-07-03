@@ -78,15 +78,31 @@ async function run() {
         res.status(500).json({ message: "Server error" });
       }
     };
+    const verifyRider = async (req, res, next) => {
+      const email = req?.decoded?.email;
 
-    app.get("/riders", async (req, res) => {
+      if (!email) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      try {
+        const user = await usersCollection.findOne({ email });
+        if (user?.role === "rider") {
+          next();
+        }
+      } catch (error) {
+        res.status(500).json({ message: "Server error" });
+      }
+    };
+
+    app.get("/riders", verifyToken, verifyAdmin, async (req, res) => {
       const status = req.query.status;
       const filter = status ? { status } : {};
       const riders = await ridersCollection.find(filter).toArray();
       res.send(riders);
     });
 
-    app.get("/allRiders", async (req, res) => {
+    app.get("/allRiders", verifyToken, verifyAdmin, async (req, res) => {
       try {
         // Find riders with status "pending"
         const pendingRiders = await ridersCollection
@@ -100,7 +116,7 @@ async function run() {
       }
     });
 
-    app.get("/rider/parcels/completed-deliveries", async (req, res) => {
+    app.get("/rider/parcels/completed-deliveries", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const email = req.query.email;
         const completedParcels = await parcelCollection
@@ -121,7 +137,7 @@ async function run() {
     });
 
     // GET /api/parcels/pending-for-rider?email=rider@gmail.com
-    app.get("/pending-for-rider", async (req, res) => {
+    app.get("/pending-for-rider", verifyToken, verifyRider, async (req, res) => {
       const riderEmail = req.query.riderEmail;
       console.log(riderEmail);
 
@@ -203,7 +219,7 @@ async function run() {
       }
     });
 
-    app.patch("/parcels/:id/cashout", async (req, res) => {
+    app.patch("/parcels/:id/cashout", verifyToken, verifyRider, async (req, res) => {
       const id = req.params.id;
       const { cashout_amount } = req.body;
 
@@ -270,7 +286,7 @@ async function run() {
       }
     });
 
-    app.patch("/riders/:riderId", async (req, res) => {
+    app.patch("/riders/:riderId", verifyToken, verifyAdmin, async (req, res) => {
       const { riderId } = req.params;
       const { status, email } = req.body;
 
@@ -323,7 +339,7 @@ async function run() {
     });
 
     // routes/users.js
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       const search = req.query.search || "";
       const users = await usersCollection
         .find({
@@ -401,7 +417,7 @@ async function run() {
     });
 
     // GET /parcels/assignable
-    app.get("/parcels/assignable", async (req, res) => {
+    app.get("/parcels/assignable", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const parcels = await parcelCollection
           .find({
@@ -433,7 +449,7 @@ async function run() {
       }
     });
 
-    app.patch("/parcels/:parcelId", async (req, res) => {
+    app.patch("/parcels/:parcelId", verifyToken, verifyAdmin, async (req, res) => {
       const parcelId = req.params.parcelId;
       const { assigned_rider, delivery_status, riderEmail, riderName } =
         req.body;
